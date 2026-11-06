@@ -1,0 +1,26 @@
+# Editors / OS
+.codex
+.DS_Store
+.idea/
+.vscode/
+
+# Secrets
+.env
+
+# Node
+node_modules/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+build/
+dist/
+*.egg-info/
+
+# Tool caches
+.ruff_cache/
+.pytest_cache/
+.ipynb_checkpoints/
+

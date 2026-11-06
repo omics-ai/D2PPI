@@ -1,0 +1,25 @@
+{
+  "private": true,
+  "engines": {
+    "node": ">=24"
+  },
+  "devDependencies": {
+    "husky": "^9.1.7",
+    "lint-staged": "^17.6.0",
+    "prettier": "^3.9.10"
+  },
+  "scripts": {
+    "prepare": "husky",
+    "format": "prettier --write . --ignore-unknown && ruff check --fix . && ruff format .",
+    "format:check": "prettier --check . --ignore-unknown && ruff check . && ruff format --check ."
+  },
+  "lint-staged": {
+    "**/*": [
+      "prettier --write --ignore-unknown"
+    ],
+    "**/*.py": [
+      "ruff check --fix",
+      "ruff format"
+    ]
+  }
+}

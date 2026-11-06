@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=77.0.3"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "d2ppi"
+version = "1.0.0"
+description = "D2PPI: context-aware domain representations for protein-protein interaction prediction"
+readme = "README.md"
+license = "MIT AND AFL-3.0"
+license-files = ["LICENSE", "LICENSES/DCTdomain.txt"]
+requires-python = ">=3.10"
+dependencies = ["torch>=2.1", "numpy>=1.24", "scikit-learn>=1.3", "transformers>=4.40"]
+
+[tool.setuptools]
+packages = [
+  "d2ppi",
+  "d2ppi.checkpoints",
+  "d2ppi.checkpoints.bernett_human",
+  "d2ppi.checkpoints.dscript_xspecies",
+  "d2ppi.checkpoints.d2ppi_xspecies",
+]
+
+[tool.setuptools.package-dir]
+"d2ppi.checkpoints" = "checkpoints"
+
+[tool.setuptools.package-data]
+"d2ppi.checkpoints" = ["SHA256SUMS", "*/*.pt"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["d2ppi"]
