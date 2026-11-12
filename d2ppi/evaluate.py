@@ -11,6 +11,7 @@ Reported sets: Bernett test, test_long (pairs with len(seq1) + len(seq2) > 2,193
 """
 
 import argparse
+import gzip
 import json
 import os
 import sys
@@ -83,7 +84,7 @@ def main():
         length = (ln[[table.index[x] for x in cols["id1"]]], ln[[table.index[x] for x in cols["id2"]]])
     sets = subsets(bench, cols, length)
     # score each species on its own, so the batches (and so the last float bits) match the paper's runs
-    groups = [m for m in sets.values()] if "species" in cols else [np.ones(len(y), bool)]
+    groups = list(sets.values()) if "species" in cols else [np.ones(len(y), bool)]
     p = np.zeros(len(y), np.float32)
     for m in groups:
         ix = np.flatnonzero(m)
@@ -106,11 +107,10 @@ def main():
     os.makedirs(a.out, exist_ok=True)
     out = os.path.join(a.out, f"{bench}_{a.encoder}_{a.split}.json")
     info = {"benchmark": bench, "encoder": a.encoder, "split": a.split, "table": emb, "head": meta.get("name")}
-    json.dump({**info, "metrics": res}, open(out, "w"), indent=1)
+    with open(out, "w") as f:
+        json.dump({**info, "metrics": res}, f, indent=1)
     print(f"\n[evaluate] wrote {out}", file=sys.stderr)
     if a.save_probs:
-        import gzip
-
         pp = out[:-5] + "_probs.tsv.gz"
         with gzip.open(pp, "wt") as f:
             extra = "species" in cols

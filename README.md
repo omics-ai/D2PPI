@@ -53,7 +53,7 @@ python -m d2ppi.predict --seq-a MSTNPKPQRKTKRNTNRRPQDVKFPGG... --seq-b MKVLAAGIV
 ```
 
 Many pairs: a FASTA file of the proteins plus a TSV or CSV of id pairs (columns `id1`/`id2`, or else the first two
-columns):
+columns; the header line is optional):
 
 ```bash
 python -m d2ppi.predict --fasta examples/proteins.fasta --pairs examples/pairs.tsv --out examples/scores.tsv
@@ -101,7 +101,8 @@ d2ppi/
   metrics.py    AUPR, AUROC and thresholded metrics
 checkpoints/    the six released heads (+ SHA256SUMS)
 examples/       a small FASTA and pair list
-tests/          pytest checks (checkpoint integrity, symmetry, released-head scores and evaluation)
+tests/          pytest checks (checkpoint integrity, symmetry, released-head scores, evaluation, input parsing,
+                shard merging, download resume)
 LICENSES/       DCTdomain's licence (the NumPy RecCut port keeps its attribution in reccut.py)
 ```
 

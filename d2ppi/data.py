@@ -43,7 +43,7 @@ class Table:
             keep = np.array(sorted({idx[p] for p in pids}), dtype=np.int64)
         cnt = off[1:] - off[:-1]
         dom = z["dom_packed"]
-        if pids is not None:
+        if len(keep) < len(all_pids):  # a subset: copy only its domains
             rows = np.concatenate([np.arange(off[i], off[i + 1]) for i in keep]) if len(keep) else np.zeros(0, int)
             dom = dom[rows]
         self.pids = [all_pids[i] for i in keep]
@@ -133,6 +133,29 @@ def read_pairs(path, columns=None):
             for c, p in zip(want, pos, strict=True):
                 cols[c].append(row[p])
     return cols
+
+
+def read_id_pairs(path, known=()):
+    """[(id_a, id_b)] from a TSV/CSV of protein-id pairs (optionally .gz): columns id1 / id2, or else the first two.
+
+    The header line is optional: a first line whose first two fields are both in `known` (the ids of the FASTA) is
+    read as a pair.
+    """
+    opener = gzip.open if path.endswith(".gz") else open
+    with opener(path, "rt", newline="") as f:
+        delim = "\t" if "\t" in f.readline() else ","
+        f.seek(0)
+        rows = [row for row in csv.reader(f, delimiter=delim) if row]
+    head = rows[0] if rows else []
+    if "id1" in head and "id2" in head:
+        ia, ib, rows = head.index("id1"), head.index("id2"), rows[1:]
+    else:
+        ia, ib = 0, 1
+        if not (len(head) > 1 and head[0] in known and head[1] in known):  # a header line, not a pair
+            rows = rows[1:]
+    if len(head) < 2 or any(len(row) <= max(ia, ib) for row in rows):
+        raise SystemExit(f"{path}: every line needs two protein ids, separated by a tab or a comma")
+    return [(row[ia], row[ib]) for row in rows]
 
 
 def parse_ranges(s):

@@ -3,7 +3,7 @@
     # one pair
     python -m d2ppi.predict --seq-a MKTAYIAKQR... --seq-b MSEQNNTEMT...
 
-    # many pairs: a FASTA of the proteins and a TSV/CSV of id pairs (first two columns, or id1/id2)
+    # many pairs: a FASTA of the proteins and a TSV/CSV of id pairs (columns id1/id2, or else the first two)
     python -m d2ppi.predict --fasta proteins.fasta --pairs pairs.tsv --out scores.tsv
 
 Each protein is cut into domains (RecCut on the ESM-2-150M contact map, d2ppi.segment), the domains are embedded
@@ -26,7 +26,7 @@ import sys
 
 import torch
 
-from d2ppi.data import Scorer, Table, read_fasta, read_pairs, write_domain_file
+from d2ppi.data import Scorer, Table, read_fasta, read_id_pairs, write_domain_file
 from d2ppi.embed import Encoder, embed_proteins
 from d2ppi.heads import BENCHMARKS, ENCODERS, benchmark_name, load_head
 from d2ppi.segment import ContactPredictor, segment
@@ -55,10 +55,7 @@ def load_inputs(a):
     elif a.fasta:
         seqs = read_fasta(a.fasta)
         if a.pairs:
-            c = read_pairs(a.pairs)
-            names = list(c)
-            ca, cb = ("id1", "id2") if "id1" in c and "id2" in c else (names[0], names[1])
-            pairs = list(zip(c[ca], c[cb], strict=True))
+            pairs = read_id_pairs(a.pairs, seqs)
         elif len(seqs) == 2:
             pairs = [tuple(seqs)]
         else:
@@ -91,19 +88,21 @@ def main():
     ap.add_argument("--id-a", default="A")
     ap.add_argument("--id-b", default="B")
     ap.add_argument("--fasta", help="FASTA of the proteins")
-    ap.add_argument("--pairs", help="TSV/CSV of protein-id pairs (columns id1, id2, or the first two)")
+    ap.add_argument("--pairs", help="TSV/CSV of protein-id pairs (columns id1, id2, or the first two; the header "
+                    "line is optional)")  # fmt: skip
     ap.add_argument("--encoder", default="esm2_650m", choices=list(ENCODERS),
                     help="esm2_650m (default; ~9 GB GPU) or esm2_15b (~40 GB GPU)")  # fmt: skip
     ap.add_argument("--heads", nargs="+", default=["all"], help="all (default), or any of bernett dscript lfxs")
     ap.add_argument("--out", help="output TSV (default: print to stdout)")
-    ap.add_argument("--domains-out", help="also write each protein's domains (TSV) here")
+    ap.add_argument("--domains-out", help="also write each protein's domains (TSV) here; heads that segment with "
+                    "different windows get one file each, <name>.window<W>.tsv")  # fmt: skip
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     a = ap.parse_args()
     torch.backends.cuda.matmul.allow_tf32 = torch.backends.cudnn.allow_tf32 = False
     if a.device == "cpu" and a.encoder == "esm2_15b":
         print("[predict] warning: ESM-2-15B on the CPU needs ~60 GB of RAM and is very slow", file=sys.stderr)
 
-    heads = list(BENCHMARKS) if a.heads == ["all"] else [benchmark_name(h) for h in a.heads]
+    heads = list(BENCHMARKS) if a.heads == ["all"] else list(dict.fromkeys(benchmark_name(h) for h in a.heads))
     seqs, pairs = load_inputs(a)
     print(f"[predict] {len(pairs)} pair(s), {len(seqs)} protein(s); encoder {a.encoder}; heads {', '.join(heads)}",
           file=sys.stderr, flush=True)  # fmt: skip
@@ -135,13 +134,11 @@ def main():
         cols[h] = Scorer(table, mean, std, a.device).score(model, [x for x, _ in pairs], [y for _, y in pairs])
 
     if a.domains_out:
-        if len(windows) == 1:
-            write_domain_file(a.domains_out, doms[next(iter(windows))])
-        else:
-            for w in sorted(windows):
-                base, ext = os.path.splitext(a.domains_out)
-                write_domain_file(f"{base}.window{w}{ext or '.tsv'}", doms[w])
-        print(f"[predict] wrote domains to {a.domains_out}", file=sys.stderr)
+        base, ext = os.path.splitext(a.domains_out)
+        for w in sorted(windows):  # heads with different segmentation windows: one file per window
+            path = a.domains_out if len(windows) == 1 else f"{base}.window{w}{ext or '.tsv'}"
+            write_domain_file(path, doms[w])
+            print(f"[predict] wrote domains to {path}", file=sys.stderr)
 
     lines = ["id_a\tid_b\tlen_a\tlen_b\t" + "\t".join(f"p_{h}" for h in heads)]
     for k, (x, y) in enumerate(pairs):

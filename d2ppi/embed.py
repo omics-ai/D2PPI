@@ -124,7 +124,8 @@ def window_start(ranges, L, ctx=CTX):
 def embed_proteins(enc, proteins, budget=16384, log=True):
     """proteins: [(pid, sequence, domains)] with domains as lists of (start, end) ranges (see clean_domains).
 
-    -> {pid: (domain embeddings (k, D) float32, whole-protein embedding (D,) float32)}
+    -> ({pid: (domain embeddings (k, D) float32, whole-protein embedding (D,) float32)},
+        {pid: the domains that were embedded, i.e. clean_domains of the input})
     """
     t0 = time.time()
     prots = [(p, s, clean_domains(s, d)) for p, s, d in proteins]
@@ -170,14 +171,20 @@ def embed_proteins(enc, proteins, budget=16384, log=True):
     return res, {p: d for p, _s, d in prots}
 
 
+def _savez(path, **arrays):
+    """np.savez to exactly `path` (np.savez itself appends .npz to other names), replaced only once complete."""
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    tmp = path + ".tmp.npz"
+    np.savez(tmp, **arrays)
+    os.replace(tmp, path)
+
+
 def write_table(path, seqs, res, doms, meta):
     """write an embedding table (format: d2ppi.data) for the proteins of `res`, sorted by id."""
     pids = sorted(res)
     off = np.concatenate([[0], np.cumsum([res[p][0].shape[0] for p in pids])]).astype(np.int64)
-    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-    tmp = path + ".tmp.npz"
-    np.savez(
-        tmp,
+    _savez(
+        path,
         pids=np.array(pids, dtype=str),
         length=np.array([len(seqs[p]) for p in pids], dtype=np.int32),
         dom_packed=np.concatenate([res[p][0] for p in pids], 0).astype(np.float32),
@@ -186,10 +193,10 @@ def write_table(path, seqs, res, doms, meta):
         glob=np.stack([res[p][1] for p in pids], 0).astype(np.float32),
         meta=np.array(json.dumps(meta)),
     )
-    os.replace(tmp, path)
 
 
 def merge_tables(out, parts):
+    """join the shard tables `parts` into one table `out`, sorted by id like an unsharded run's."""
     zs = [np.load(p, allow_pickle=False) for p in parts]
     pids = np.concatenate([z["pids"] for z in zs])
     if len(set(pids.tolist())) != len(pids):
@@ -199,7 +206,8 @@ def merge_tables(out, parts):
     rngs = [np.split(z["dom_range"], z["dom_off"][1:-1]) for z in zs]
     doms, rngs = [d for x in doms for d in x], [r for x in rngs for r in x]
     off = np.concatenate([[0], np.cumsum([len(doms[i]) for i in order])]).astype(np.int64)
-    np.savez(
+    meta = {**json.loads(str(zs[0]["meta"])), "shard": None}  # the first shard's, minus its shard number
+    _savez(
         out,
         pids=pids[order],
         length=np.concatenate([z["length"] for z in zs])[order],
@@ -207,7 +215,7 @@ def merge_tables(out, parts):
         dom_off=off,
         dom_range=np.concatenate([rngs[i] for i in order]),
         glob=np.concatenate([z["glob"] for z in zs])[order],
-        meta=zs[0]["meta"],
+        meta=np.array(json.dumps(meta)),
     )
     print(f"[embed] merged {len(parts)} shards -> {out} ({len(pids)} proteins)", file=sys.stderr)
 
@@ -228,8 +236,8 @@ def main():
     ap = argparse.ArgumentParser(description="Build an embedding table for the proteins of pair tables")
     ap.add_argument("--pairs", nargs="+", help="pair tables (TSV with id1 id2 seq1 seq2)")
     ap.add_argument("--domains-from", help="embedding table whose dom_range gives the domains (Zenodo .npz)")
-    ap.add_argument("--domains", help="domain TSV pid, domain, ranges (d2ppi.predict --domains-out), instead of "
-                    "--domains-from")  # fmt: skip
+    ap.add_argument("--domains", help="domain TSV pid, domain, ranges (d2ppi.segment --out or d2ppi.predict "
+                    "--domains-out), instead of --domains-from")  # fmt: skip
     ap.add_argument("--encoder", default="esm2_650m", choices=list(ENCODERS))
     ap.add_argument("--out", required=True)
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
@@ -238,9 +246,17 @@ def main():
     ap.add_argument("--merge", nargs="+", metavar="SHARD", help="join shard tables into --out and exit")
     a = ap.parse_args()
     if a.merge:
-        return merge_tables(a.out, a.merge)
+        merge_tables(a.out, a.merge)
+        return
     if not a.pairs or not (a.domains_from or a.domains):
         ap.error("--pairs and one of --domains-from / --domains are required")
+    if a.shard:
+        try:
+            k, n = map(int, a.shard.split("/"))
+        except ValueError:
+            k, n = 0, 0
+        if not 0 <= k < n:
+            ap.error(f"--shard {a.shard}: give K/N with 0 <= K < N, e.g. 0/4")
     torch.backends.cuda.matmul.allow_tf32 = torch.backends.cudnn.allow_tf32 = False
     if str(a.device).startswith("cuda"):
         torch.set_num_threads(1)  # CPU work is only pooling; one thread keeps its summation order fixed
@@ -252,9 +268,10 @@ def main():
         doms = read_domain_file(a.domains)
     pids = sorted(seqs)
     if a.shard:
-        k, n = map(int, a.shard.split("/"))
         by_len = sorted(pids, key=lambda p: (len(seqs[p]), p))
         pids = sorted(by_len[k::n])
+    if not pids:
+        raise SystemExit("[embed] no proteins to embed" + (f" in shard {a.shard}" if a.shard else ""))
     missing = [p for p in pids if p not in doms]
     if missing:
         print(f"[embed] {len(missing)} proteins have no domains: each is embedded as one whole-protein domain",

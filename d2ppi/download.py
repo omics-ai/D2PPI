@@ -40,22 +40,28 @@ def md5sum(path, chunk=1 << 24):
     return h.hexdigest()
 
 
-def fetch(url, dest):
-    """download url -> dest, resuming a partial file."""
+def fetch(url, dest, size=None):
+    """download url -> dest through dest + '.part', resuming a partial file. `size`: the expected length in bytes."""
     part = dest + ".part"
     have = os.path.getsize(part) if os.path.exists(part) else 0
-    req = urllib.request.Request(url, headers={**UA, **({"Range": f"bytes={have}-"} if have else {})})
-    with urllib.request.urlopen(req) as r:
-        if have and r.status != 206:  # server ignored the range: start over
-            have = 0
-        total = have + int(r.headers.get("Content-Length", 0))
-        with open(part, "ab" if have else "wb") as f:
-            done = have
-            while b := r.read(1 << 22):
-                f.write(b)
-                done += len(b)
-                _progress(done, total)
-    sys.stderr.write("\n")
+    if size is not None and have > size:  # not a piece of this file: start over
+        have = 0
+    if have != size:
+        req = urllib.request.Request(url, headers={**UA, **({"Range": f"bytes={have}-"} if have else {})})
+        with urllib.request.urlopen(req) as r:
+            if have and r.status != 206:  # server ignored the range: start over
+                have = 0
+            total = size or have + int(r.headers.get("Content-Length", 0))
+            with open(part, "ab" if have else "wb") as f:
+                done = have
+                while b := r.read(1 << 22):
+                    f.write(b)
+                    done += len(b)
+                    _progress(done, total)
+        sys.stderr.write("\n")
+        # a dropped connection ends r.read() without an error: keep the .part file, so the next run resumes it
+        if size is not None and done != size:
+            raise SystemExit(f"download interrupted at {done:,} of {size:,} bytes: run the command again to resume")
     os.replace(part, dest)
 
 
@@ -142,7 +148,7 @@ def main():
         zpath = os.path.join(a.out, "benchmark.zip")
         if not (os.path.exists(zpath) and os.path.getsize(zpath) == SIZE):
             print(f"[download] {URL} -> {zpath} ({SIZE / 1e9:.1f} GB)", file=sys.stderr)
-            fetch(URL, zpath)
+            fetch(URL, zpath, SIZE)
         print("[download] checking md5 ...", file=sys.stderr)
         got = md5sum(zpath)
         if got != MD5:
